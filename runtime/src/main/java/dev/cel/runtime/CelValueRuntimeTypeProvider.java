@@ -22,11 +22,14 @@ import dev.cel.common.annotations.Internal;
 import dev.cel.common.exceptions.CelAttributeNotFoundException;
 import dev.cel.common.values.BaseProtoCelValueConverter;
 import dev.cel.common.values.BaseProtoMessageValueProvider;
+import dev.cel.common.values.CelValueConverter;
 import dev.cel.common.values.CelValueProvider;
 import dev.cel.common.values.CombinedCelValueProvider;
+import dev.cel.common.values.ProtoMessageValueProvider;
 import dev.cel.common.values.SelectableValue;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /** Bridge between the old RuntimeTypeProvider and CelValueProvider APIs. */
 @Internal
@@ -39,26 +42,40 @@ final class CelValueRuntimeTypeProvider implements RuntimeTypeProvider {
       new BaseProtoCelValueConverter() {};
 
   static CelValueRuntimeTypeProvider newInstance(CelValueProvider valueProvider) {
-    BaseProtoCelValueConverter converter = DEFAULT_CEL_VALUE_CONVERTER;
-
-    // Find the underlying ProtoCelValueConverter.
-    // This is required because DefaultInterpreter works with a resolved protobuf messages directly
-    // in evaluation flow.
-    // A new runtime should not directly depend on protobuf, thus this will not be needed in the
-    // future.
-    if (valueProvider instanceof BaseProtoMessageValueProvider) {
-      converter = ((BaseProtoMessageValueProvider) valueProvider).protoCelValueConverter();
-    } else if (valueProvider instanceof CombinedCelValueProvider) {
-      converter =
-          ((CombinedCelValueProvider) valueProvider)
-              .valueProviders().stream()
-                  .filter(p -> p instanceof BaseProtoMessageValueProvider)
-                  .map(p -> ((BaseProtoMessageValueProvider) p).protoCelValueConverter())
-                  .findFirst()
-                  .orElse(DEFAULT_CEL_VALUE_CONVERTER);
-    }
-
+    BaseProtoCelValueConverter converter =
+        extractProtoCelValueConverter(valueProvider).orElse(DEFAULT_CEL_VALUE_CONVERTER);
     return new CelValueRuntimeTypeProvider(valueProvider, converter);
+  }
+
+  // Find the underlying ProtoCelValueConverter. This is required because DefaultInterpreter works
+  // with resolved protobuf messages directly in the evaluation flow; the runtime needs a
+  // ProtoCelValueConverter to wrap raw Messages as SelectableValues. Both
+  // BaseProtoMessageValueProvider (abstract base) and ProtoMessageValueProvider (stand-alone
+  // implementation) expose one. ProtoMessageValueProvider previously extended
+  // BaseProtoMessageValueProvider but was refactored to implement CelValueProvider directly; the
+  // check here needs to cover both shapes.
+  private static Optional<BaseProtoCelValueConverter> extractProtoCelValueConverter(
+      CelValueProvider valueProvider) {
+    if (valueProvider instanceof BaseProtoMessageValueProvider) {
+      return Optional.of(
+          ((BaseProtoMessageValueProvider) valueProvider).protoCelValueConverter());
+    }
+    if (valueProvider instanceof ProtoMessageValueProvider) {
+      CelValueConverter celConverter =
+          ((ProtoMessageValueProvider) valueProvider).celValueConverter();
+      if (celConverter instanceof BaseProtoCelValueConverter) {
+        return Optional.of((BaseProtoCelValueConverter) celConverter);
+      }
+    }
+    if (valueProvider instanceof CombinedCelValueProvider) {
+      return ((CombinedCelValueProvider) valueProvider)
+          .valueProviders().stream()
+              .map(CelValueRuntimeTypeProvider::extractProtoCelValueConverter)
+              .filter(Optional::isPresent)
+              .map(Optional::get)
+              .findFirst();
+    }
+    return Optional.empty();
   }
 
   @Override
