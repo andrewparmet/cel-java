@@ -71,6 +71,18 @@ public final class ProtoCelValueConverter extends BaseProtoCelValueConverter {
               "Unpacking failed for message: " + message.getDescriptorForType().getFullName(), e);
         }
         return toRuntimeValue(unpackedMessage);
+      case FIELD_MASK:
+        // The base-class default converts FieldMask to a comma-separated string (its JSON wire
+        // form). That's correct when a FieldMask is being assigned to a google.protobuf.Value
+        // field (see ProtoLiteAdapter/CelProtoJsonAdapter, which handle JSON assignment at
+        // their own level), but it breaks CEL expressions that access fields on the FieldMask
+        // itself (e.g. `fieldMask.paths`) — the string has no field `paths`.
+        //
+        // The CEL spec's WKT conversion table does not list FieldMask. cel-go treats it as a
+        // regular message, as does cel-java's legacy ProtoLiteAdapter.adaptValueToWellKnownProto
+        // for non-JSON contexts. Preserve that behavior here by wrapping as a ProtoMessageValue.
+        return ProtoMessageValue.create(
+            (Message) message, celDescriptorPool, this, celOptions.enableJsonFieldNames());
       default:
         return super.fromWellKnownProto(message, wellKnownProto);
     }
