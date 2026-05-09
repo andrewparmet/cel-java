@@ -303,6 +303,35 @@ public final class ProtoMessageValueTest {
         .isEqualTo(Duration.ofSeconds(seconds, nanos));
   }
 
+  // The CEL spec maps proto's fixed32/fixed64 to CEL's uint. cel-java's checker (via
+  // DescriptorMappings) and its legacy DescriptorMessageProvider (via ProtoAdapter) both honor
+  // this. The CelValue path via ProtoCelValueConverter.fromProtoMessageFieldToCelValue used to
+  // miss FIXED32/FIXED64, falling through to normalizePrimitive and producing Integer/Long. That
+  // caused overload resolution to fail at runtime with "No matching overload" when the checker
+  // said uint but the runtime served a signed integer.
+  @Test
+  public void selectField_fixed32_returnsUnsignedLong() {
+    TestAllTypes testAllTypes = TestAllTypes.newBuilder().setSingleFixed32(1).build();
+
+    ProtoMessageValue protoMessageValue =
+        ProtoMessageValue.create(
+            testAllTypes, DefaultDescriptorPool.INSTANCE, PROTO_CEL_VALUE_CONVERTER, false);
+
+    assertThat(protoMessageValue.select("single_fixed32")).isEqualTo(UnsignedLong.valueOf(1L));
+  }
+
+  @Test
+  public void selectField_fixed64_returnsUnsignedLong() {
+    TestAllTypes testAllTypes =
+        TestAllTypes.newBuilder().setSingleFixed64(UnsignedLong.MAX_VALUE.longValue()).build();
+
+    ProtoMessageValue protoMessageValue =
+        ProtoMessageValue.create(
+            testAllTypes, DefaultDescriptorPool.INSTANCE, PROTO_CEL_VALUE_CONVERTER, false);
+
+    assertThat(protoMessageValue.select("single_fixed64")).isEqualTo(UnsignedLong.MAX_VALUE);
+  }
+
   @SuppressWarnings("ImmutableEnumChecker") // Test only
   private enum SelectFieldJsonValueTestCase {
     NULL(Value.newBuilder().build(), NullValue.NULL_VALUE),
