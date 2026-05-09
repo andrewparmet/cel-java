@@ -303,6 +303,30 @@ public final class ProtoMessageValueTest {
         .isEqualTo(Duration.ofSeconds(seconds, nanos));
   }
 
+  // FieldMask is not in the CEL spec's WKT conversion table and should be treated as a regular
+  // message so expressions like `fieldMask.paths` work. The base-class default
+  // (BaseProtoCelValueConverter) converts FieldMask to a comma-separated string in
+  // fromWellKnownProto; that's only correct in JSON-assignment contexts (handled separately by
+  // CelProtoJsonAdapter). ProtoCelValueConverter overrides to preserve FieldMask as a
+  // ProtoMessageValue so field selection continues to work.
+  @Test
+  public void selectField_fieldMask_returnsProtoMessageValue() {
+    TestAllTypes testAllTypes =
+        TestAllTypes.newBuilder()
+            .setFieldMask(
+                com.google.protobuf.FieldMask.newBuilder().addPaths("foo").addPaths("bar"))
+            .build();
+
+    ProtoMessageValue protoMessageValue =
+        ProtoMessageValue.create(
+            testAllTypes, DefaultDescriptorPool.INSTANCE, PROTO_CEL_VALUE_CONVERTER, false);
+
+    Object selected = protoMessageValue.select("field_mask");
+    assertThat(selected).isInstanceOf(ProtoMessageValue.class);
+    assertThat(((ProtoMessageValue) selected).select("paths"))
+        .isEqualTo(ImmutableList.of("foo", "bar"));
+  }
+
   @SuppressWarnings("ImmutableEnumChecker") // Test only
   private enum SelectFieldJsonValueTestCase {
     NULL(Value.newBuilder().build(), NullValue.NULL_VALUE),
