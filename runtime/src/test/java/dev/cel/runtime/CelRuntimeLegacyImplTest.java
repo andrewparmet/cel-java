@@ -16,9 +16,15 @@ package dev.cel.runtime;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.Message;
+import dev.cel.bundle.Cel;
+import dev.cel.bundle.CelFactory;
+import dev.cel.common.CelAbstractSyntaxTree;
 import dev.cel.common.CelException;
+import dev.cel.common.CelOptions;
 import dev.cel.common.exceptions.CelDivideByZeroException;
+import dev.cel.common.types.StructTypeReference;
 import dev.cel.common.values.CelValueProvider;
 import dev.cel.compiler.CelCompiler;
 import dev.cel.compiler.CelCompilerFactory;
@@ -124,5 +130,36 @@ public final class CelRuntimeLegacyImplTest {
     assertThat(newRuntimeBuilder.overriddenStandardFunctions)
         .isEqualTo(overriddenStandardFunctions);
     assertThat(newRuntimeBuilder.celValueProvider).isEqualTo(noOpValueProvider);
+  }
+
+  // When enableCelValue(true) is set on the legacy runtime, CelRuntimeLegacyImpl falls back to the
+  // default ProtoMessageValueProvider (not provided by the user) and passes it to
+  // CelValueRuntimeTypeProvider.newInstance. That method needs to extract the underlying
+  // BaseProtoCelValueConverter so raw Messages can be wrapped as SelectableValues for field
+  // access.
+  //
+  // ProtoMessageValueProvider previously extended BaseProtoMessageValueProvider, so the
+  // instanceof check in newInstance caught it. It was later refactored to implement
+  // CelValueProvider directly, and the check in newInstance wasn't updated — so the default
+  // pass-through converter got installed, and any field access on a Message variable failed with
+  // "Field selections must be performed on messages or maps." Regression-guard with a simple
+  // end-to-end evaluation that exercises the default-provider path.
+  @Test
+  public void evaluate_enableCelValue_defaultProtoMessageValueProvider_fieldAccessSucceeds()
+      throws Exception {
+    Cel cel =
+        CelFactory.standardCelBuilder()
+            .setOptions(CelOptions.current().enableCelValue(true).build())
+            .addVar(
+                "msg", StructTypeReference.create(TestAllTypes.getDescriptor().getFullName()))
+            .addMessageTypes(TestAllTypes.getDescriptor())
+            .build();
+    CelAbstractSyntaxTree ast = cel.compile("msg.single_int64").getAst();
+    CelRuntime.Program program = cel.createProgram(ast);
+
+    Object evaluatedResult =
+        program.eval(ImmutableMap.of("msg", TestAllTypes.newBuilder().setSingleInt64(42L).build()));
+
+    assertThat(evaluatedResult).isEqualTo(42L);
   }
 }
